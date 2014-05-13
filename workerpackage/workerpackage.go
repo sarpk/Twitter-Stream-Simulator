@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-type worker func([]byte) 
+type worker func([]byte) bool
 
 func failOnError(err error, msg string) {
 	if err != nil {
@@ -19,13 +19,15 @@ func failOnError(err error, msg string) {
 func ListenForever(msgs <-chan amqp.Delivery, myWorker worker) {
 	for {
 		for d := range msgs {
-			myWorker(d.Body)
+			if myWorker(d.Body) { //expect worker to return true if work is completed successfully
+				d.Ack(false) //acknowledge message to be deleted from the queue
+			}
 		}
 	}
 }
 
 // Initialises the worker and returns msg delivery 
-func InitWorker() <-chan amqp.Delivery {
+func InitWorker(queueName string) <-chan amqp.Delivery {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
 	failOnError(err, "Failed to connect to RabbitMQ")
 	//defer conn.Close()
@@ -45,7 +47,7 @@ func InitWorker() <-chan amqp.Delivery {
 	)
 	failOnError(err, "Failed to declare an exchange")
 	q, err := ch.QueueDeclare(
-		"",    // name
+		queueName,    // name
 		false, // durable
 		false, // delete when usused
 		false, // exclusive
@@ -54,16 +56,28 @@ func InitWorker() <-chan amqp.Delivery {
 	)
 	failOnError(err, "Failed to declare a queue")
 	
+	ch.Qos(1, 0, false) //Take one message at a time
+	
 	routing_key := "twitter"
-	log.Printf("Binding queue %s to exchange %s with routing key %s", q.Name, "logs_topic", routing_key)
+	exchange := "logs_topic"
+	log.Printf("Binding queue %s to exchange %s with routing key %s", q.Name, exchange, routing_key)
 	err = ch.QueueBind(
 		q.Name,        // queue name
 		routing_key,   // routing key
-		"logs_topic", // exchange
+		exchange, // exchange
 		false,
 			nil)
 	failOnError(err, "Failed to bind a queue")
-
-	msgs, err := ch.Consume(q.Name, "", true, false, false, false, nil)
+	
+	msgs, err := ch.Consume(
+		q.Name, // name
+		"",      // consumerTag,
+		false,      // noAck
+		false,      // exclusive
+		false,      // noLocal
+		false,      // noWait
+		nil,        // arguments
+	)
+	
 	return msgs
 }
