@@ -21,7 +21,13 @@ func ListenForever(msgs <-chan amqp.Delivery, myWorker worker) {
 		for d := range msgs {
 			if myWorker(d.Body) { //expect worker to return true if work is completed successfully
 				d.Ack(false) //acknowledge message to be deleted from the queue
-			}
+			} else { //The work was not completed successfully
+				d.Nack( // Negatively acknowledge to send message to another consumer
+					false,	// multiple
+					true, // require (send it to another consumer)
+				)
+			}				
+			
 		}
 	}
 }
